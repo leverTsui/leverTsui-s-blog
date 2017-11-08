@@ -1,282 +1,401 @@
-title: iOS二维码识别/二维码生成
+title: MBProgressHUD 源码分析
 tags:
-  - 二维码 图片识别
+  - 源码分析
 categories:
-  - iOS 开发
+  - 三方开源库
 author: leveltsui
-date: 2017-11-03 20:42:00
+date: 2017-11-08 22:26:00
 ---
-#### 前言
-之前做过一个关于二维码的组件，已发布，现总结下。
-开发的`APP`所需支持的最低版本为`8.0`，最初的方案为扫描使用苹果自带的`API`实现扫一扫的功能、使用`ZXing`识别从相册或别人转发的二维码图片。但发现`ZXing`识别从相册中来的图片性能很差，很多图片识别不了，且耗时较长，遂使用`ZBar`来实现识别从相册或别人转发的二维码图片。 
-这个组件重要实现了三个功能，扫一扫识别二维码图片、长按图片识别二维码图片和生成二维码图片。
-首先来看下扫一扫识别二维码图片的代码实现：
+在项目中经常会使用`MBProgressHUD`来实现弹窗提醒，所有来分析下`MBProgressHUD`这个三方库的代码。所分析的源码版本号为1.0.0。
+***
+这篇总结主要分三个部分来介绍分析这个框架：
+- 代码结构
+- 方法调用流程图
+- 方法内部实现
+***
+##### 代码结构
+###### 类图
 
-#### 功能实现
-##### 扫一扫识别二维码图片 
+![MBProgressHUD.png](http://upload-images.jianshu.io/upload_images/117999-5da3f0778692f17f.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+#####  核心API
+###### 属性
+ ```
+/*
+ * 用来推迟HUD的显示，避免HUD显示时间过短，出现一闪而逝的情况，默认值为0。
+ */
+@property (assign, nonatomic) NSTimeInterval graceTime;
+
+/**
+ *  HUD最短显示时间，单位为s，默认值为0。 
+ */
+@property (assign, nonatomic) NSTimeInterval minShowTime;
+
+/**
+ * HUD隐藏时，将其从父视图上移除 。默认值为NO 
+ */
+@property (assign, nonatomic) BOOL removeFromSuperViewOnHide; 
+
+/** 
+ * HUD显示类型，默认为 MBProgressHUDModeIndeterminate.
+ */
+@property (assign, nonatomic) MBProgressHUDMode mode; 
+ ```
+ ######  类方法
+```
+/**
+ * 创建HUD,添加到提供的视图上并显示
+ */
++ (instancetype)showHUDAddedTo:(UIView *)view animated:(BOOL)animated;
+
+/**
+ * 找到最上层的HUD,并隐藏。
+ */
++ (BOOL)hideHUDForView:(UIView *)view animated:(BOOL)animated;
+
+/**
+ * 在传入的View上找到最上层的HUD并隐藏此HUD
+ */
++ (nullable MBProgressHUD *)HUDForView:(UIView *)view;
+```
+ ###### 实例方法
+```
+/**
+ * 构造函数，用来初始化HUD
+ */
+- (instancetype)initWithView:(UIView *)view;
+
+/** 
+ * 显示HUD
+ */
+- (void)showAnimated:(BOOL)animated;
+
+/** 
+ * 隐藏HUD
+ */
+- (void)hideAnimated:(BOOL)animated;
+```
+ ##### 方法调用流程图 
+从`MBProgressHUD`提供的主要接口可以看出，主要有显示HUD和隐藏HUD这两个功能，一步步追溯，得出的方法调用流程图如下：
+![MBProgressHUD流程图.png](http://upload-images.jianshu.io/upload_images/117999-4c522bd388a1a65a.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+##### 方法内部实现
+方法的内部实现主要从两个方面来分析，显示HUD和隐藏HUD。
+###### 显示HUD
+首先是MBProgressHUD的构造方法
+``` 
++ (instancetype)showHUDAddedTo:(UIView *)view animated:(BOOL)animated {
+    //初始化MBProgressHUD
+    MBProgressHUD *hud = [[self alloc] initWithView:view];
+    hud.removeFromSuperViewOnHide = YES;
+    [view addSubview:hud];
+    [hud showAnimated:animated];
+    [[UINavigationBar appearance] setBarTintColor:nil];
+    return hud;
+}
+```
+首先进入`- (id)initWithView:(UIView *)view`方法，再进入`- (instancetype)initWithFrame:(CGRect)frame`方法，最后调用`- (void)commonInit`方法，进行属性的初始化和添加子视图。
+```
+- (void)commonInit {
+    // Set default values for properties
+    _animationType = MBProgressHUDAnimationFade;
+    _mode = MBProgressHUDModeIndeterminate;
+    _margin = 20.0f;
+    _opacity = 1.f;
+    _defaultMotionEffectsEnabled = YES;
+
+    // Default color, depending on the current iOS version
+    BOOL isLegacy = kCFCoreFoundationVersionNumber < kCFCoreFoundationVersionNumber_iOS_7_0;
+    _contentColor = isLegacy ? [UIColor whiteColor] : [UIColor colorWithWhite:0.f alpha:0.7f];
+    // Transparent background
+    self.opaque = NO;
+    self.backgroundColor = [UIColor clearColor];
+    // Make it invisible for now
+    self.alpha = 0.0f;
+    self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.layer.allowsGroupOpacity = NO;
+    //添加子视图
+    [self setupViews];
+    //更新指示器
+    [self updateIndicators];
+    [self registerForNotifications];
+}
+```
+添加子视图都是常见的方式，让视图跟随陀螺仪运动，这个之前没有接触过，后续需要了解下。
+```
+- (void)updateBezelMotionEffects {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000 || TARGET_OS_TV
+    MBBackgroundView *bezelView = self.bezelView;
+    if (![bezelView respondsToSelector:@selector(addMotionEffect:)]) return;
+
+    if (self.defaultMotionEffectsEnabled) {
+        CGFloat effectOffset = 10.f;
+        UIInterpolatingMotionEffect *effectX = [[UIInterpolatingMotionEffect alloc] initWithKeyPath:@"center.x" type:UIInterpolatingMotionEffectTypeTiltAlongHorizontalAxis];
+        effectX.maximumRelativeValue = @(effectOffset);
+        effectX.minimumRelativeValue = @(-effectOffset);
+
+        UIInterpolatingMotionEffect *effectY = [[UIInterpolatingMotionEffect alloc] initWithKeyPath:@"center.y" type:UIInterpolatingMotionEffectTypeTiltAlongVerticalAxis];
+        effectY.maximumRelativeValue = @(effectOffset);
+        effectY.minimumRelativeValue = @(-effectOffset);
+
+        UIMotionEffectGroup *group = [[UIMotionEffectGroup alloc] init];
+        group.motionEffects = @[effectX, effectY];
+
+        [bezelView addMotionEffect:group];
+    } else {
+        NSArray *effects = [bezelView motionEffects];
+        for (UIMotionEffect *effect in effects) {
+            [bezelView removeMotionEffect:effect];
+        }
+    }
+#endif
+}
+```
+再主要看下更新指示器的代码。
 ```objc
-- (void)initCapture {
-    AVCaptureDevice* inputDevice =
-    [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo]; 
-    [inputDevice lockForConfiguration:nil];
-    if ([inputDevice hasTorch]){
-        inputDevice.torchMode = AVCaptureTorchModeAuto;
+- (void)updateIndicators { 
+    UIView *indicator = self.indicator;
+    BOOL isActivityIndicator = [indicator isKindOfClass:[UIActivityIndicatorView class]];
+    BOOL isRoundIndicator = [indicator isKindOfClass:[MBRoundProgressView class]];
+
+    MBProgressHUDMode mode = self.mode;
+    //菊花动画
+    if (mode == MBProgressHUDModeIndeterminate) {
+        if (!isActivityIndicator) {
+            // Update to indeterminate indicator
+            [indicator removeFromSuperview];
+            indicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+            [(UIActivityIndicatorView *)indicator startAnimating];
+            [self.bezelView addSubview:indicator];
+        }
     }
-    AVCaptureFocusMode foucusMode = AVCaptureFocusModeContinuousAutoFocus;
-    if ([inputDevice isFocusModeSupported:foucusMode]) {
-        inputDevice.focusMode = foucusMode;
+    //水平进度条动画
+    else if (mode == MBProgressHUDModeDeterminateHorizontalBar) {
+        // Update to bar determinate indicator
+        [indicator removeFromSuperview];
+        indicator = [[MBBarProgressView alloc] init];
+        [self.bezelView addSubview:indicator];
     }
-    [inputDevice unlockForConfiguration];
-    
-    AVCaptureDeviceInput *captureInput =
-    [AVCaptureDeviceInput deviceInputWithDevice:inputDevice error:nil];
-    
-    if (!captureInput) {
-        //支持的最低版本为iOS8
-        UIAlertController *alterVC = [UIAlertController alertControllerWithTitle:MUIQRCodeLocalizedString(@"ScanViewController_system_tip") message:MUIQRCodeLocalizedString(@"ScanViewController_camera_permission") preferredStyle:UIAlertControllerStyleAlert];
-        UIAlertAction *confirmAction = [UIAlertAction actionWithTitle:MUIQRCodeLocalizedString(@"ScanViewController_yes") style:UIAlertActionStyleDefault handler:nil];
-        [alterVC addAction:confirmAction];
-        [self presentViewController:alterVC animated:YES completion:nil];
-        [self.activityView stopAnimating];
-        [self onVideoStart:nil];
+    //圆形进度动画
+    else if (mode == MBProgressHUDModeDeterminate || mode == MBProgressHUDModeAnnularDeterminate) {
+        if (!isRoundIndicator) {
+            // Update to determinante indicator
+            [indicator removeFromSuperview];
+            indicator = [[MBRoundProgressView alloc] init];
+            [self.bezelView addSubview:indicator];
+        }
+        //环形动画
+        if (mode == MBProgressHUDModeAnnularDeterminate) {
+            [(MBRoundProgressView *)indicator setAnnular:YES];
+        }
+    }
+    //自定义动画
+    else if (mode == MBProgressHUDModeCustomView && self.customView != indicator) {
+        // Update custom view indicator
+        [indicator removeFromSuperview];
+        indicator = self.customView;
+        [self.bezelView addSubview:indicator];
+    }
+    //只显示文本
+    else if (mode == MBProgressHUDModeText) {
+        [indicator removeFromSuperview];
+        indicator = nil;
+    }
+    indicator.translatesAutoresizingMaskIntoConstraints = NO;
+    self.indicator = indicator;
+
+    if ([indicator respondsToSelector:@selector(setProgress:)]) {
+        [(id)indicator setValue:@(self.progress) forKey:@"progress"];
+    }
+
+    [indicator setContentCompressionResistancePriority:998.f forAxis:UILayoutConstraintAxisHorizontal];
+    [indicator setContentCompressionResistancePriority:998.f forAxis:UILayoutConstraintAxisVertical];
+
+    [self updateViewsForColor:self.contentColor];
+    [self setNeedsUpdateConstraints];
+}
+```
+在这个方法中，主要是根据显示的模式，将不同的`indicator`视图赋值给`indicator`属性。更新完指示器后，就是开始将视图显示在界面上。调用的是`- (void)showAnimated:(BOOL)animated`方法。
+```objc
+
+- (void)showAnimated:(BOOL)animated {
+    //保证当前线程是主线程
+    MBMainThreadAssert();
+    [self.minShowTimer invalidate];
+    self.useAnimation = animated;
+    self.finished = NO;
+    // 如果设置了宽限时间，则推迟HUD的显示
+    if (self.graceTime > 0.0) {
+        NSTimer *timer = [NSTimer timerWithTimeInterval:self.graceTime
+                                                 target:self
+                                               selector:@selector(handleGraceTimer:)
+                                               userInfo:nil
+                                                repeats:NO];
+        //默认把你的Timer以NSDefaultRunLoopMode添加到MainRunLoop上，而当当前视图在滚动时，当前的MainRunLoop是处于UITrackingRunLoopMode的模式下，在这个模式下，是不会处理NSDefaultRunLoopMode的消息，要想在scrollView滚动的同时Timer也执行的话，我们需要将Timer以NSRunLoopCommonModes的模式注册到当前RunLoop中.
+        [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+        self.graceTimer = timer;
+    } 
+    // ... otherwise show the HUD immediately
+    else {
+        [self showUsingAnimation:self.useAnimation];
+    }
+}
+```
+在`- (void)showAnimated:(BOOL)animated`方法中，主要做的是判断是否设置了推迟显示HUD的时间，如果设置了，就推迟设置的时间再显示。最后，执行`- (void)showUsingAnimation:(BOOL)animated`方法。
+```objc
+
+- (void)showUsingAnimation:(BOOL)animated {
+    // Cancel any previous animations
+    [self.bezelView.layer removeAllAnimations];
+    [self.backgroundView.layer removeAllAnimations];
+
+    // Cancel any scheduled hideDelayed: calls
+    [self.hideDelayTimer invalidate];
+    //记录当前显示的时间，在HUD隐藏时，比较HUD显示到HUD隐藏之间的间隔与最小显示时间，
+    //如果小于，继续显示，直到显示时间等于最小显示时间，再隐藏HUD
+    self.showStarted = [NSDate date];
+    self.alpha = 1.f;
+
+    // Needed in case we hide and re-show with the same NSProgress object attached.
+    //好像是通过这个去刷新进度，这个需要再查下。
+    [self setNSProgressDisplayLinkEnabled:YES];
+
+    if (animated) {
+        [self animateIn:YES withType:self.animationType completion:NULL];
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        self.bezelView.alpha = self.opacity;
+#pragma clang diagnostic pop
+        self.backgroundView.alpha = 1.f;
+    }
+}
+```
+最后执行`- (void)animateIn:(BOOL)animatingIn withType:(MBProgressHUDAnimation)type completion:(void(^)(BOOL finished))completion`方法，这个方法显示和隐藏均会调用。
+```objc
+//这个方法主要对self.bezelView视图进行动画
+- (void)animateIn:(BOOL)animatingIn withType:(MBProgressHUDAnimation)type completion:(void(^)(BOOL finished))completion {
+    // Automatically determine the correct zoom animation type
+    if (type == MBProgressHUDAnimationZoom) {
+        type = animatingIn ? MBProgressHUDAnimationZoomIn : MBProgressHUDAnimationZoomOut;
+    }
+
+    CGAffineTransform small = CGAffineTransformMakeScale(0.5f, 0.5f);
+    CGAffineTransform large = CGAffineTransformMakeScale(1.5f, 1.5f);
+
+    // Set starting state
+    UIView *bezelView = self.bezelView;
+    if (animatingIn && bezelView.alpha == 0.f && type == MBProgressHUDAnimationZoomIn) {
+        bezelView.transform = small;
+    } else if (animatingIn && bezelView.alpha == 0.f && type == MBProgressHUDAnimationZoomOut) {
+        bezelView.transform = large;
+    }
+
+    // 使用动画
+    dispatch_block_t animations = ^{
+        if (animatingIn) {
+            bezelView.transform = CGAffineTransformIdentity;
+        } else if (!animatingIn && type == MBProgressHUDAnimationZoomIn) {
+            bezelView.transform = large;
+        } else if (!animatingIn && type == MBProgressHUDAnimationZoomOut) {
+            bezelView.transform = small;
+        }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        bezelView.alpha = animatingIn ? self.opacity : 0.f;
+#pragma clang diagnostic pop
+        self.backgroundView.alpha = animatingIn ? 1.f : 0.f;
+    };
+
+    // Spring animations are nicer, but only available on iOS 7+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000 || TARGET_OS_TV
+    if (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_7_0) {
+        [UIView animateWithDuration:0.3 delay:0. usingSpringWithDamping:1.f initialSpringVelocity:0.f options:UIViewAnimationOptionBeginFromCurrentState animations:animations completion:completion];
         return;
     }
-    
-    AVCaptureMetadataOutput *captureOutput = [[AVCaptureMetadataOutput alloc] init];
-    [captureOutput setMetadataObjectsDelegate:self queue:_queue];
-    self.captureOutput = captureOutput;
-    
-    self.captureSession = [[AVCaptureSession alloc] init];
-    [self.captureSession addInput:captureInput];
-    [self.captureSession addOutput:captureOutput];
-    
-    CGFloat w = 1920.f;
-    CGFloat h = 1080.f;
-    if ([self.captureSession canSetSessionPreset:AVCaptureSessionPreset1920x1080]) {
-        self.captureSession.sessionPreset = AVCaptureSessionPreset1920x1080;
-    } else if ([self.captureSession canSetSessionPreset:AVCaptureSessionPreset1280x720]) {
-        self.captureSession.sessionPreset = AVCaptureSessionPreset1280x720;
-        w = 1280.f;
-        h = 720.f;
-    } else if ([self.captureSession canSetSessionPreset:AVCaptureSessionPreset640x480]) {
-        self.captureSession.sessionPreset = AVCaptureSessionPreset640x480;
-        w = 960.f;
-        h = 540.f;
+#endif
+    [UIView animateWithDuration:0.3 delay:0. options:UIViewAnimationOptionBeginFromCurrentState animations:animations completion:completion];
+}
+```
+从代码可以看出，这里只是对指示器的父视图做了放大缩小的动画。
+###### 隐藏HUD
+```objc
+
++ (BOOL)hideHUDForView:(UIView *)view animated:(BOOL)animated {
+    //获取当前显示的hud,如果存在，当前隐藏时，将其从父视图移除
+    MBProgressHUD *hud = [self HUDForView:view];
+    if (hud != nil) {
+        hud.removeFromSuperViewOnHide = YES;
+        [hud hideAnimated:animated];
+        return YES;
     }
-    captureOutput.metadataObjectTypes = [captureOutput availableMetadataObjectTypes];
-    CGRect bounds = [[UIScreen mainScreen] bounds];
-    
-    if (!self.prevLayer) {
-        self.prevLayer = [AVCaptureVideoPreviewLayer layerWithSession:self.captureSession];
+    return NO;
+}
+```
+在这个方法的执行过程中，调用`- (void)hideAnimated:(BOOL)animated `方法。
+```objc
+ - (void)hideAnimated:(BOOL)animated {
+    MBMainThreadAssert();
+    [self.graceTimer invalidate];
+    self.useAnimation = animated;
+    self.finished = YES;
+    // 如果设置了最小显示时间，计算HUD显示时长，
+    // 如果HUD显示时长小于最小显示时间，延迟显示
+    if (self.minShowTime > 0.0 && self.showStarted) {
+        NSTimeInterval interv = [[NSDate date] timeIntervalSinceDate:self.showStarted];
+        if (interv < self.minShowTime) {
+            NSTimer *timer = [NSTimer timerWithTimeInterval:(self.minShowTime - interv) target:self selector:@selector(handleMinShowTimer:) userInfo:nil repeats:NO];
+            [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+            self.minShowTimer = timer;
+            return;
+        } 
     }
-    self.prevLayer.frame = bounds;
-    self.prevLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
-    [self.view.layer insertSublayer:self.prevLayer atIndex:0];
-    //下面代码主要用来设置扫描的聚焦范围，计算rectOfInterest
-    CGFloat p1 = bounds.size.height/bounds.size.width;
-    CGFloat p2 = w/h;
-    
-    CGRect cropRect = CGRectMake(CGRectGetMinX(_cropRect) - kSNReaderScanExpandWidth, CGRectGetMinY(_cropRect) - kSNReaderScanExpandHeight, CGRectGetWidth(_cropRect) + 2*kSNReaderScanExpandWidth, CGRectGetHeight(_cropRect) + 2*kSNReaderScanExpandHeight);
-    
-//    CGRect cropRect = _cropRect;
-    if (fabs(p1 - p2) < 0.00001) {
-        captureOutput.rectOfInterest = CGRectMake(cropRect.origin.y /bounds.size.height,                         cropRect.origin.x/bounds.size.width,
-                                                  cropRect.size.height/bounds.size.height,
-                                                  cropRect.size.width/bounds.size.width);
-    } else if (p1 < p2) {
-        //实际图像被截取一段高
-        CGFloat fixHeight = bounds.size.width * w / h;
-        CGFloat fixPadding = (fixHeight - bounds.size.height)/2;
-        captureOutput.rectOfInterest = CGRectMake((cropRect.origin.y + fixPadding)/fixHeight,
-                                                  cropRect.origin.x/bounds.size.width,
-                                                  cropRect.size.height/fixHeight,
-                                                  cropRect.size.width/bounds.size.width);
+    // ... otherwise hide the HUD immediately
+    [self hideUsingAnimation:self.useAnimation];
+}
+```
+`- (void)hideAnimated:(BOOL)animated `方法中，主要做的是判断是否需要推迟隐藏HUD，最后调用`- (void)hideUsingAnimation:(BOOL)animated`方法，
+```objc
+
+- (void)hideUsingAnimation:(BOOL)animated {
+    //判断是否需要动画效果，如无，则直接隐藏
+    if (animated && self.showStarted) {
+        self.showStarted = nil;
+        //跟显示HUD差不多，只是指示器父视图没有做放大缩小的动画
+        [self animateIn:NO withType:self.animationType completion:^(BOOL finished) {
+            [self done];
+        }];
     } else {
-        CGFloat fixWidth = bounds.size.height * h / w;
-        CGFloat fixPadding = (fixWidth - bounds.size.width)/2;
-        captureOutput.rectOfInterest = CGRectMake(cropRect.origin.y/bounds.size.height,
-                                                  (cropRect.origin.x + fixPadding)/fixWidth,
-                                                  cropRect.size.height/bounds.size.height,
-                                                  cropRect.size.width/fixWidth);
+        self.showStarted = nil;
+        self.bezelView.alpha = 0.f;
+        self.backgroundView.alpha = 1.f;
+        [self done];
     }
 }
 ```
-
-##### 识别二维码图片
-识别二维码图片的功能，最初的方案是使用三方库`ZXing`来实现，因为`ZXing`有人在维护，但`ZXing`识别相册中的二维码图片或本地的图片时，有些图片根本就识别不出来，且耗时较长，所以改为使用`ZBar`。在网上找到一篇文章[再见ZXing 使用系统原生代码处理QRCode](http://adad184.com/2015/09/30/goodbye-zxing/),实测发现使用系统原生代码来识别二维码图片时，在，iphone4s，系统为iOS9的手机发现传回来的数组为空。代码如下：
-```objc 
-- (NSString *)decodeQRImageWith:(UIImage*)aImage {
-    NSString *qrResult = nil; 
-    //iOS8及以上可以使用系统自带的识别二维码图片接口，但此api有问题，在一些机型上detector为nil。 
-    if (iOS8_OR_LATER) { 
-          CIContext *context = [CIContext contextWithOptions:nil];
-          CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeQRCode context:context options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
-          CIImage *image = [CIImage imageWithCGImage:aImage.CGImage];
-          NSArray *features = [detector featuresInImage:image];
-          CIQRCodeFeature *feature = [features firstObject]; 
-          qrResult = feature.messageString;
-      } else {
-          ZBarReaderController* read = [ZBarReaderController new];
-          CGImageRef cgImageRef = aImage.CGImage;
-          ZBarSymbol* symbol = nil;
-          for(symbol in [read scanImage:cgImageRef]) break;
-             qrResult = symbol.data ;
-            return qrResult;
-     }
- }
- ```
-
-无图无真相：
-
-![14567CBE-E1D2-4FA7-AFA3-8B2037171F38.jpg](http://upload-images.jianshu.io/upload_images/117999-5dae9fc15755140c.jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240) 
-
-detector的值为nil，也就是说 
-
-```objc     
-CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeQRCode context:context options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
-```
-CIDetector的初始化方法无效。推测是苹果API的问题。 
-##### 生成二维码图片
-在`iOS8`及以上版本使用苹果的`API`生成二维码图片，代码如下：
+最后，调用`- (void)done`方法。这个方法主要负责属性的释放和隐藏完成回调的处理。
 ```objc
-- (UIImage *)encodeQRImageWithContent:(NSString *)content size:(CGSize)size {
-    UIImage *codeImage = nil;
-    if (iOS8_OR_LATER) {
-        NSData *stringData = [content dataUsingEncoding: NSUTF8StringEncoding]; 
-        //生成
-      CIFilter *qrFilter = [CIFilter filterWithName:@"CIQRCodeGenerator"];
-      [qrFilter setValue:stringData forKey:@"inputMessage"];
-      [qrFilter setValue:@"M" forKey:@"inputCorrectionLevel"];
-      UIColor *onColor = [UIColor blackColor];
-      UIColor *offColor = [UIColor whiteColor];
-      //上色
-      CIFilter *colorFilter = [CIFilter filterWithName:@"CIFalseColor"
-                                         keysAndValues:
-                               @"inputImage",qrFilter.outputImage,
-                               @"inputColor0",[CIColor colorWithCGColor:onColor.CGColor],
-                               @"inputColor1",[CIColor colorWithCGColor:offColor.CGColor],
-                               nil];
+- (void)done {
+    // Cancel any scheduled hideDelayed: calls
+    [self.hideDelayTimer invalidate];
+    //指示进度的显示问题，后续还需再补充
+    [self setNSProgressDisplayLinkEnabled:NO];
 
-      CIImage *qrImage = colorFilter.outputImage;
-      CGImageRef cgImage = [[CIContext contextWithOptions:nil] createCGImage:qrImage fromRect:qrImage.extent];
-      UIGraphicsBeginImageContext(size);
-      CGContextRef context = UIGraphicsGetCurrentContext();
-      CGContextSetInterpolationQuality(context, kCGInterpolationNone);
-      CGContextScaleCTM(context, 1.0, -1.0);
-      CGContextDrawImage(context, CGContextGetClipBoundingBox(context), cgImage);
-      codeImage = UIGraphicsGetImageFromCurrentImageContext();
-      UIGraphicsEndImageContext(); 
-      CGImageRelease(cgImage);
-      } else {
-          codeImage = [QRCodeGenerator qrImageForString:content imageSize:size.width];
-      }
-      return codeImage;
-  }
-```
-`iOS8`以下使用`libqrencode`库来生成二维码图片。
-
-#### 代码完善
-`2015年12月11日` 
-
-`QA`测试发现，服务端生成的二维码，使用`ZBar`识别不出来，但将这张图片保存到相册，然后发送就可以识别出来。最初的想法是要服务端修改生成的二维码，但安卓能够识别出来，此路不通，那只有看ZBar的源码了。
-```objc
-- (id <NSFastEnumeration>) scanImage: (CGImageRef) image {
-        timer_start;
-        int nsyms = [self scanImage: image
-                          withScaling: 0];
-      //没有识别出来，判断CGImageRef对象的宽和高是否大于640，大于或等于的话进行缩放再进行扫描
-        if(!nsyms &&
-           CGImageGetWidth(image) >= 640 &&
-           CGImageGetHeight(image) >= 640)
-            // make one more attempt for close up, grainy images
-            nsyms = [self scanImage: image
-                          withScaling: .5];
-
-        NSMutableArray *syms = nil;
-        if(nsyms) {
-            // quality/type filtering
-            int max_quality = MIN_QUALITY;
-            for(ZBarSymbol *sym in scanner.results) {
-                zbar_symbol_type_t type = sym.type;
-                int quality;
-                if(type == ZBAR_QRCODE)
-                    quality = INT_MAX;
-                else
-                    quality = sym.quality;
-
-                if(quality < max_quality) {
-                    zlog(@"    type=%d quality=%d < %d\n",
-                         type, quality, max_quality);
-                    continue;
-                }
-
-                if(max_quality < quality) {
-                    max_quality = quality;
-                    if(syms)
-                        [syms removeAllObjects];
-                }
-                zlog(@"    type=%d quality=%d\n", type, quality);
-                if(!syms)
-                    syms = [NSMutableArray arrayWithCapacity: 1];
-
-                [syms addObject: sym];
-            }
-        }
-
-        zlog(@"read %d filtered symbols in %gs total\n",
-              (!syms) ? 0 : [syms count], timer_elapsed(t_start, timer_now()));
-        return(syms);
-      }
-      if(max_quality < quality) {
-          max_quality = quality;
-          if(syms)
-              [syms removeAllObjects];
-      }
-      zlog(@"    type=%d quality=%d\n", type, quality);
-      if(!syms)
-          syms = [NSMutableArray arrayWithCapacity: 1];
-
-      [syms addObject: sym];
-      }
-  }
-  zlog(@"read %d filtered symbols in %gs total\n",
-        (!syms) ? 0 : [syms count], timer_elapsed(t_start, timer_now()));
-  return(syms);
+    if (self.hasFinished) {
+        self.alpha = 0.0f;
+        if (self.removeFromSuperViewOnHide) {
+            [self removeFromSuperview];
+        }
+    }
+    MBProgressHUDCompletionBlock completionBlock = self.completionBlock;
+    if (completionBlock) {
+        completionBlock();
+    }
+    id<MBProgressHUDDelegate> delegate = self.delegate;
+    if ([delegate respondsToSelector:@selector(hudWasHidden:)]) {
+        [delegate performSelector:@selector(hudWasHidden:) withObject:self];
+    }
 }
-```
-
-在这里就产生了一个解决有些二维码图片识别不出来的解决思路：将传过来的`UIImage`的宽和高设置为640，识别不出来再进行缩放识别。修改`UIImage`的代码如下：
-```objc
--(UIImage *)TransformtoSize:(CGSize)Newsize {
-    // 创建一个bitmap的context
-    UIGraphicsBeginImageContext(Newsize);
-    // 绘制改变大小的图片
-    [self drawInRect:CGRectMake(0, 0, Newsize.width, Newsize.height)];
-    // 从当前context中创建一个改变大小后的图片
-    UIImage *TransformedImg=UIGraphicsGetImageFromCurrentImageContext();
-    // 使当前的context出堆栈
-    UIGraphicsEndImageContext();
-    // 返回新的改变大小后的图片
-    return TransformedImg;
-}
-```
-这样类似于将`ZXing`中的`tryHard`设置为`YES`。识别不出来的二维码图片就可以识别了。
-
-`2016年5月20日`
-`遗留的bug`: 点击进入扫一扫界面，退出，再进入，这样重复5次左右，扫一扫之前的界面的会出现卡顿。
-原因：多次进入扫一扫界面，再退出，因此界面未被系统回收，captureSession对象一直在运行，会造成内存泄露，引起上一个界面卡顿。
-解决方案：在视图将要消失的时候，确保captureSession对象停止运行。
-```objc
-- (void)viewWillDisappear:(BOOL)animated {
-  [super viewWillDisappear:animated];
-  if ([self.captureSession isRunning]) {
-      [self.captureSession stopRunning];
-  }
-}
-```
-#### 小结
-源码和demo请点[这里](https://github.com/hua16/QRCodeDemo.git)
-参考的文章链接如下
-[再见ZXing 使用系统原生代码处理QRCode](http://adad184.com/2015/09/30/goodbye-zxing/)
-[IOS二维码扫描,你需要注意的两件事](http://blog.cnbluebox.com/blog/2014/08/26/ioser-wei-ma-sao-miao/)
-[[Zbar算法流程介绍](http://blog.csdn.net/u013738531/article/details/54574262)](http://blog.csdn.net/u013738531/article/details/54574262)
+``` 
+##### 总结
+从代码来看，`MBProgressHUD`这个三方库有几个地方值借鉴：
+- `graceTime`和`minShowTime`，在开发的时候会出现显示HUD后，存在缓存或者网速较好时，HUD显示到HUD隐藏的时间较短，界面出现闪动的情况，这时，就可以通过设置`graceTime`和`minShowTime`来处理，达到更好的用户体验。 这个在封装弹窗控件时，可以参考。
