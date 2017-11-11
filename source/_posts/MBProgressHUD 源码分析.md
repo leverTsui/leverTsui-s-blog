@@ -19,7 +19,7 @@ date: 2017-11-08 22:26:00
 ![MBProgressHUD.png](http://upload-images.jianshu.io/upload_images/117999-5da3f0778692f17f.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
 #####  核心API
 ###### 属性
- ```
+ ```objc
 /*
  * 用来推迟HUD的显示，避免HUD显示时间过短，出现一闪而逝的情况，默认值为0。
  */
@@ -41,7 +41,7 @@ date: 2017-11-08 22:26:00
 @property (assign, nonatomic) MBProgressHUDMode mode; 
  ```
  ######  类方法
-```
+```objc
 /**
  * 创建HUD,添加到提供的视图上并显示
  */
@@ -58,7 +58,7 @@ date: 2017-11-08 22:26:00
 + (nullable MBProgressHUD *)HUDForView:(UIView *)view;
 ```
  ###### 实例方法
-```
+```objc
 /**
  * 构造函数，用来初始化HUD
  */
@@ -82,7 +82,7 @@ date: 2017-11-08 22:26:00
 方法的内部实现主要从两个方面来分析，显示HUD和隐藏HUD。
 ###### 显示HUD
 首先是MBProgressHUD的构造方法
-``` 
+```objc
 + (instancetype)showHUDAddedTo:(UIView *)view animated:(BOOL)animated {
     //初始化MBProgressHUD
     MBProgressHUD *hud = [[self alloc] initWithView:view];
@@ -94,7 +94,7 @@ date: 2017-11-08 22:26:00
 }
 ```
 首先进入`- (id)initWithView:(UIView *)view`方法，再进入`- (instancetype)initWithFrame:(CGRect)frame`方法，最后调用`- (void)commonInit`方法，进行属性的初始化和添加子视图。
-```
+```objc
 - (void)commonInit {
     // Set default values for properties
     _animationType = MBProgressHUDAnimationFade;
@@ -121,7 +121,7 @@ date: 2017-11-08 22:26:00
 }
 ```
 添加子视图都是常见的方式，让视图跟随陀螺仪运动，这个之前没有接触过，后续需要了解下。
-```
+```objc
 - (void)updateBezelMotionEffects {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000 || TARGET_OS_TV
     MBBackgroundView *bezelView = self.bezelView;
