@@ -281,6 +281,7 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
 
 > 任务A：使用系统提供的CoreImage的CIDetector接口去识别二维码图片，返回对应的字符串；
 任务B：使用zbar中的方法去识别二维码图片，返回对应的字符串。
+
 ```objc
 //任务A
 + (NSString *)useSystemMethodDecodeImage:(UIImage *)image {
@@ -339,6 +340,7 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
 }
 ```
 - 方案B：同时执行任务A和任务B，两者均执行完后，返回识别的结果； 
+
 ```objc 
 + (NSString *)planTwoDecodeWithImage:(UIImage *)image index:(NSInteger)index { 
     __block NSMutableString *costTimeInfo = [NSMutableString stringWithFormat:@"%ld\r\n",index];
@@ -381,7 +383,8 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
 1、任务A先执行完且识别成功，返回识别结果；
 2、任务B先执行完且识别成功，返回识别结果；
 3、任务A和任务B均识别失败，两者均执行完后，返回识别的结果。
-```objc
+
+```objc 
 + (NSString *)planThreeDecodeWithImage:(UIImage *)image index:(NSInteger)index {
     __block NSMutableString *costTimeInfo = [NSMutableString stringWithFormat:@"%ld\r\n",index];
     __block NSString *detectorString = nil;
@@ -430,6 +433,7 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
     return [costTimeInfo copy];
 }
 ``` 
+
 测试数据如下所示:(取了前10张图片）
 
 ![识别二维码图片耗时.png](https://upload-images.jianshu.io/upload_images/117999-04bca1bbc1f28805.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
