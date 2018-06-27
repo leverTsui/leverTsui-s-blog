@@ -274,7 +274,176 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
   }
 }
 ```
+`2018年4月28日`
+识别二维码图片优化
+
+近期通过`bugly`收集卡顿问题发现，二维码组件在识别二维码图片时，会出现卡顿问题。为优化识别速度，采用了三种方案，并分别进行测试，并对测试数据进行分析，最终挑选出最优的方案。
+
+> 任务A：使用系统提供的CoreImage的CIDetector接口去识别二维码图片，返回对应的字符串；
+任务B：使用zbar中的方法去识别二维码图片，返回对应的字符串。
+```objc
+//任务A
++ (NSString *)useSystemMethodDecodeImage:(UIImage *)image {
+    NSString *resultString = nil;
+    CIDetector *detector = [CIDetector detectorOfType:CIDetectorTypeQRCode
+                                              context:nil
+                                              options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
+    if (detector) {
+        CIImage *ciImage = [CIImage imageWithCGImage:image.CGImage];
+        NSArray *features = [detector featuresInImage:ciImage];
+        CIQRCodeFeature *feature = [features firstObject];
+        resultString = feature.messageString;
+    }
+    return resultString;
+}
+//任务B
++ (NSString *)useZbarMethodDecodeImage:(UIImage *)image {
+    UIImage *decodeImage = image;
+    if (decodeImage.size.width < 641) {
+        decodeImage = [decodeImage TransformtoSize:CGSizeMake(640, 640)];
+    }
+    QRCodeZBarReaderController* read = [QRCodeZBarReaderController new];
+    CGImageRef cgImageRef = decodeImage.CGImage;
+    QRCodeZBarSymbol *symbol = nil;
+    for(symbol in [read scanImage:cgImageRef]) break;
+    return symbol.data;
+}
+```
+
+- 方案A：先执行任务A，如果获取到的字符串为空，再执行任务B。
+
+```objc 
++ (NSString *)planOneDecodeWithImage:(UIImage *)image index:(NSInteger)index{
+ 
+    NSMutableString *costTimeInfo = [NSMutableString stringWithFormat:@"%ld\r\n",index];
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    NSString *detectorString = [MUIQRCodeDecoder useSystemMethodDecodeImage:image];
+    CFAbsoluteTime detectorCostTime = (CFAbsoluteTimeGetCurrent() - startTime);
+    
+    [costTimeInfo appendString:[NSString stringWithFormat:@"detector : %f ms\r\n",detectorCostTime *1000.0]];
+    
+    NSAssert(detectorString.length > 0, @"detector fail!");
+    CFAbsoluteTime zbarStartTime = CFAbsoluteTimeGetCurrent();
+    NSString *zbarSymbolString = [MUIQRCodeDecoder useZbarMethodDecodeImage:image];
+    NSAssert(zbarSymbolString.length > 0, @"zbar fail!");
+    CFAbsoluteTime zbarCostTime = (CFAbsoluteTimeGetCurrent() - zbarStartTime);
+    
+    [costTimeInfo appendString:[NSString stringWithFormat:@"zbar : %f ms\r\n",zbarCostTime *1000.0]];
+    
+    CFAbsoluteTime totalCostTime = (CFAbsoluteTimeGetCurrent() - startTime);
+    
+    [costTimeInfo appendString:[NSString stringWithFormat:@"total cost : %f ms\r\n",totalCostTime *1000.0]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"detectorString : %@ ms\r\n",detectorString]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"zbarSymbolString : %@ ms\r\n",zbarSymbolString]];
+    return [costTimeInfo copy];
+}
+```
+- 方案B：同时执行任务A和任务B，两者均执行完后，返回识别的结果； 
+```objc 
++ (NSString *)planTwoDecodeWithImage:(UIImage *)image index:(NSInteger)index { 
+    __block NSMutableString *costTimeInfo = [NSMutableString stringWithFormat:@"%ld\r\n",index];
+    __block NSString *detectorString = nil;
+    __block NSString *zbarSymbolString = nil;
+    
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    dispatch_group_t group = dispatch_group_create();
+    
+    dispatch_group_async(group, dispatch_get_global_queue(0,0), ^{
+        detectorString = [MUIQRCodeDecoder useSystemMethodDecodeImage:image];
+        NSAssert(detectorString.length > 0, @"detector fail!");
+        CFAbsoluteTime costTime = (CFAbsoluteTimeGetCurrent() - startTime);
+        [costTimeInfo appendString:[NSString stringWithFormat:@"detector : %f ms\r\n",costTime *1000.0]];
+    });
+    
+    dispatch_group_async(group, dispatch_get_global_queue(0,0), ^{
+        zbarSymbolString = [MUIQRCodeDecoder useZbarMethodDecodeImage:image];
+        NSAssert(zbarSymbolString.length > 0, @"zbar fail!");
+        CFAbsoluteTime costTime = (CFAbsoluteTimeGetCurrent() - startTime);
+        [costTimeInfo appendString:[NSString stringWithFormat:@"zbar : %f ms\r\n",costTime *1000.0]];
+    });
+    
+    dispatch_group_notify(group, dispatch_get_global_queue(0,0), ^{
+        dispatch_semaphore_signal(semaphore);
+    });
+    
+    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+    
+    CFAbsoluteTime totalCostTime = (CFAbsoluteTimeGetCurrent() - startTime);
+    [costTimeInfo appendString:[NSString stringWithFormat:@"total cost : %f ms\r\n",totalCostTime *1000.0]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"detectorString : %@ ms\r\n",detectorString]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"zbarSymbolString : %@ ms\r\n",zbarSymbolString]];
+    return [costTimeInfo copy];
+}
+```
+- 方案C：同时执行任务A和任务B
+1、任务A先执行完且识别成功，返回识别结果；
+2、任务B先执行完且识别成功，返回识别结果；
+3、任务A和任务B均识别失败，两者均执行完后，返回识别的结果。
+```objc
++ (NSString *)planThreeDecodeWithImage:(UIImage *)image index:(NSInteger)index {
+    __block NSMutableString *costTimeInfo = [NSMutableString stringWithFormat:@"%ld\r\n",index];
+    __block NSString *detectorString = nil;
+    __block NSString *zbarSymbolString = nil;
+    __block BOOL isNeedSendSignal = YES;
+    
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    dispatch_group_t group = dispatch_group_create();
+    
+    dispatch_group_async(group, dispatch_get_global_queue(0,0), ^{
+        detectorString = [MUIQRCodeDecoder useSystemMethodDecodeImage:image];
+        //NSAssert(detectorString.length > 0, @"detector fail!");
+        CFAbsoluteTime costTime = (CFAbsoluteTimeGetCurrent() - startTime);
+        [costTimeInfo appendString:[NSString stringWithFormat:@"detector : %f ms\r\n",costTime *1000.0]];
+        if (detectorString.length > 0 && isNeedSendSignal) {
+            isNeedSendSignal = NO;
+            dispatch_semaphore_signal(semaphore);
+        }
+    });
+    
+    dispatch_group_async(group, dispatch_get_global_queue(0,0), ^{
+        zbarSymbolString = [MUIQRCodeDecoder useZbarMethodDecodeImage:image];
+        //NSAssert(zbarSymbolString.length > 0, @"zbar fail!");
+        CFAbsoluteTime costTime = (CFAbsoluteTimeGetCurrent() - startTime);
+        [costTimeInfo appendString:[NSString stringWithFormat:@"zbar : %f ms\r\n",costTime *1000.0]];
+        if (zbarSymbolString.length > 0 && isNeedSendSignal) {
+            isNeedSendSignal = NO;
+            dispatch_semaphore_signal(semaphore);
+        }
+    });
+    
+    dispatch_group_notify(group, dispatch_get_global_queue(0,0), ^{
+        if (isNeedSendSignal) {
+            dispatch_semaphore_signal(semaphore);
+        }
+    });
+    
+    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+    
+    CFAbsoluteTime totalCostTime = (CFAbsoluteTimeGetCurrent() - startTime);
+    [costTimeInfo appendString:[NSString stringWithFormat:@"total cost : %f ms\r\n",totalCostTime *1000.0]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"detectorString : %@ ms\r\n",detectorString]];
+    [costTimeInfo appendString:[NSString stringWithFormat:@"zbarSymbolString : %@ ms\r\n",zbarSymbolString]]; 
+    return [costTimeInfo copy];
+}
+``` 
+测试数据如下所示:(取了前10张图片）
+
+![识别二维码图片耗时.png](https://upload-images.jianshu.io/upload_images/117999-04bca1bbc1f28805.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+分析测试数据发现：
+1、在测试第一张二维码图片时，总耗时均较大，如果第一次识别使用的是系统方法，耗时超过500ms，这也是为什么会出现卡顿的原因；
+2、使用系统方法去识别二维码图片时，如果不是第一次去识别，耗时较小，在65ms以内；
+3、使用zbar的方法去识别二维码图片，耗时均值在200ms以内；
+4、在方案C中，如果第一次使用系统方法，耗时为226ms。
+
+总结得出，从优化卡顿问题的角度出发，使用方案C最优，同时发现，如果使用系统方法能识别出二维码图片，在初始化之后（也就是第二次使用），耗时最短。同时因为在实际的使用场景中，图片是一张一张识别的，识别过程有一个间隔时间，如果已经使用系统方法识别过二维码图片，那下次识别就能达到最优。所以使用方案C的话，最差情况均值在200ms左右，最好的情况和方案A中第二次使用系统方法耗时基本一致。综合考虑，使用方案C。
+
 #### 小结
+在实际的项目开发过程中，设想的情况和实际情况会存在偏差，需要自己时刻使用性能调优工具，根据数据去进行优化，而不能想当然的认为某种方式是最优的。
 源码和demo请点[这里](https://github.com/leverTsui/QRCodeDemo.git)
 参考的文章链接如下
 [再见ZXing 使用系统原生代码处理QRCode](http://adad184.com/2015/09/30/goodbye-zxing/)
