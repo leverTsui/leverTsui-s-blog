@@ -275,7 +275,7 @@ CIDetector的初始化方法无效。推测是苹果API的问题。
 }
 ```
 #### 小结
-源码和demo请点[这里](https://github.com/hua16/QRCodeDemo.git)
+源码和demo请点[这里](https://github.com/leverTsui/QRCodeDemo.git)
 参考的文章链接如下
 [再见ZXing 使用系统原生代码处理QRCode](http://adad184.com/2015/09/30/goodbye-zxing/)
 [IOS二维码扫描,你需要注意的两件事](http://blog.cnbluebox.com/blog/2014/08/26/ioser-wei-ma-sao-miao/)

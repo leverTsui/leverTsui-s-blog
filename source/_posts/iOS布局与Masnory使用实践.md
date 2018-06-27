@@ -126,7 +126,7 @@ categories:
 ##### `AutoLayout`的性能
 
 从`AutoLayout`的原理，我们可以得出布局系统最后仍然需要通过`frame`来进行布局，相比原有的布局系统加入了从约束计算 出`frame` 的过程,那么这个过程对性能是否会影响呢？
-你可以在 [**这里**](https://github.com/hua16/summary) 找到这次对 `Layout` 性能测量使用的代码。
+你可以在 [**这里**](https://github.com/leverTsui/summary) 找到这次对 `Layout` 性能测量使用的代码。
 代码分别使用` Auto Layout `、嵌套视图层级中使用 `Auto Layout `和` frame `对 `N` 个视图进行布局，测算其运行时间。
 
 对视图数量在 1~35 之间布局时间进行测量，结果如下：
