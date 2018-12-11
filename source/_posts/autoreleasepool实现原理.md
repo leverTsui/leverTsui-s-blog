@@ -1,3 +1,14 @@
+title: autoreleasepool实现原理
+author: leverTsui
+author_id: leverTsui
+language: zh-Hans
+date: 2018-12-03 20:46:28 
+tags:
+  - autoreleasepool
+categories:
+  - iOS 技巧
+---
+
 main.m中包含的代码如下所示,使用 clang -rewrite-objc 命令将下面的 Objective-C 代码重写成 C++ 代码：
 ```objc
 int main(int argc, const char * argv[]) {
